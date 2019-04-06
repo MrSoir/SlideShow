@@ -8,41 +8,39 @@ import resizeCanvasToDisplaySize from 'webgl-utils';
 
 	var vertexShaderSource = `#version 300 es
 	
-	// an attribute is an input (in) to a vertex shader.
-	// It will receive data from a buffer
-	in vec3 pos;
-	in vec3 col;
+	layout (location = 0) in vec3 pos;
+	layout (location = 1) in vec3 col;
+	
+	layout (location = 2) in mat4 trnsform;
 	
 	uniform mat4 modelView;
 	uniform mat4 perspective;
 	
 	out vec3 fcol;
 	
-	// all shaders have a main function
-	void main() {
-		// gl_Position is a special variable a vertex shader
-		// is responsible for setting
-		gl_Position = perspective * modelView * vec4(pos, 1.0);
-		fcol = col;
+	void main() {		
+		mat4 fake = mat4(vec4(1.0, 0.0, 0.0, 1.0),
+							  vec4(0.0, 1.0, 0.0, 1.0),
+							  vec4(0.0, 0.0, 1.0, 1.0),
+							  vec4(1.0, 1.0, 1.0, 1.0));
+		
+		gl_Position = perspective * modelView * trnsform * vec4(pos, 1.0);
+
+		fcol = vec3(trnsform[2]);//vec3(v4.x, v4.y, v4.z);
 	}
 `;
 
 //-----------------------------------------------------------------
 
 var fragmentShaderSource = `#version 300 es
-	
-	// fragment shaders don't have a default precision so we need
-	// to pick one. mediump is a good default. It means "medium precision"
 	precision mediump float;
 	
 	in vec3 fcol;
 	
-	// we need to declare an output for the fragment shader
 	out vec4 outColor;
 	
 	void main() {
-		// Just set the output to a constant redish-purple
-		outColor = vec4(fcol,  1.0);
+		outColor = vec4(fcol, 1.0);
 	}
 `;
 
@@ -245,27 +243,84 @@ function createAndDrawVertexData(data, size, shader_name, stride=0, offset=0){
 //-----------------------------------------------------------------
 
 var vertexData = {};
+var layoutLocations = new Map();
 
-function genAndBindVertexData(data, size, shader_name, stride=0, offset=0){	
-	let data_buffer = gl.createBuffer();
-   gl.bindBuffer(gl.ARRAY_BUFFER, data_buffer);
+function createVBO(data){
+	let vbo = gl.createBuffer();
+   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
-	
+   return vbo;
+}
+
+function genAndBindVectorVBO(data, size, shader_name, stride=0, offset=0){	
 	let shaderProgram = shaderMeta.curShaderProgram.program;
 	
-	gl.bindBuffer(gl.ARRAY_BUFFER, data_buffer);
-	let shaderLoc = gl.getAttribLocation(shaderProgram, shader_name);
-	gl.vertexAttribPointer(shaderLoc, size, gl.FLOAT, false, stride, offset) ;
-	gl.enableVertexAttribArray(shaderLoc);
+	let vbo = createVBO(data);
+	gl.bindBuffer(gl.ARRAY_BUFFER, vbo); // wird bereits in createVBO beim erzeugen gebunden
+	
+	let layoutLoc = layoutLocations[shader_name];
+	if(layoutLoc < 0){
+		console.log(`\nlayoutLoc < 0!!! -> layoutLoc: ${layoutLoc}!!! - getAttribLocation did not find shader_name: ${shader_name}`);
+	}
+	
+	gl.enableVertexAttribArray(layoutLoc);
+	gl.vertexAttribPointer(layoutLoc, size, gl.FLOAT, false, stride, offset) ;
 	
 	gl.bindBuffer(gl.ARRAY_BUFFER, null);
 	
 	let shaderData = {
-   	dataBuffer: data_buffer,
+   	vbo: vbo,
 	   data: data,
 	   shaderName: shader_name,
 	   stride: stride,
 	   offset: offset
+	};
+	vertexData[shader_name] = shaderData;
+	return shaderData;
+}
+function genAndBindMatrixVBO(data, size, shader_name){
+	let shaderProgram = shaderMeta.curShaderProgram.program;
+	
+	let vbo = createVBO(data);
+	
+	let dataSizes;
+	if(size === 16){
+		dataSizes = [4,4,4,4];
+	}else if(size === 9){
+		dataSizes = [3,3,3];
+	}else if(size === 4){
+		dataSizes = [2,2];
+	}else{
+		throw "genAndBindMatrixVBO:  size -> {0} -> must be 16, 9 or 4!!!".format(size);
+		return;
+	}
+	
+	let stride = dataSizes.reduce((total, val)=>total+val);
+	
+	let offset = 0;
+	
+	let layoutLoc = layoutLocations[shader_name];
+	if(layoutLoc < 0){
+		console.log(`\nlayoutLoc < 0!!! -> layoutLoc: ${layoutLoc}!!! - getAttribLocation did not find shader_name: ${shader_name}`);
+	}
+	
+	for (let i=0; i < dataSizes.length; ++i){
+		console.log('i: ', i, '	dataSize: ', dataSizes[i], '  stride: ', stride, '  offset: ', offset);
+		
+		gl.enableVertexAttribArray(layoutLoc + i);
+		gl.vertexAttribPointer(layoutLoc + i, dataSizes[i], gl.FLOAT, false, stride * 4, offset * 4) ;
+		
+		offset += dataSizes[i];
+	}
+	
+	gl.bindBuffer(gl.ARRAY_BUFFER, null);
+	
+	let shaderData = {
+   	vbo: vbo,
+	   data: data,
+	   shaderName: shader_name,
+	   dataSizes: dataSizes,
+	   stride: stride
 	};
 	vertexData[shader_name] = shaderData;
 	return shaderData;
@@ -299,13 +354,44 @@ function createPane(){
 	];
 	vertexData.colors = colors;
 	
-	genAndBindVertexData(positions, 3, 'pos');
-	genAndBindVertexData(colors,    3, 'col');
+	let transmat = genTranslMatrix(0,0,0);//1.0, 1.0, 1.0);
+	let transData = [];
+	for(let i=0; i < Math.floor(positions.length/3.0); ++i){
+		transData.push( ...transmat );
+	}
+	console.log('transmat: ');
+	for(let i=0; i < transmat.length/4; ++i){
+		console.log('  ', transmat[i*4 + 0], transmat[i*4 + 1], transmat[i*4 + 2], transmat[i*4 + 3]);
+	}
+	console.log('transData: ', transData);
+	
+	let shaderProgram = shaderMeta.curShaderProgram.program;;
+	layoutLocations['pos'] = gl.getAttribLocation(shaderProgram, 'pos');
+	layoutLocations['col'] = 1; //gl.getAttribLocation(shaderProgram, 'col'); <- komischer seltsamer fehler: gl.getAttribLocation findet 'col' nicht!!!
+	layoutLocations['trnsform'] = gl.getAttribLocation(shaderProgram, 'trnsform');
+	
+	genAndBindVectorVBO(positions,  3, 'pos');
+	genAndBindVectorVBO(colors,     3, 'col');
+	genAndBindMatrixVBO(transData, 16, 'trnsform');
 	
 	let primitiveType = gl.TRIANGLES;
 	let offset = 0;
 	let count = 6;
 	gl.drawArrays(primitiveType, offset, count);
+	
+	// always unbind VAO:
+	gl.bindVertexArray(null);
+}
+
+function genTranslMatrix(x, y, z){
+	let tm = glMatrix.mat4.create();
+	glMatrix.mat4.fromTranslation(tm, glMatrix.vec3.fromValues(x,y,z));
+	return tm;
+}
+function genScaleMatrix(s){
+	let sm = glMatrix.mat4.create();
+	glMatrix.mat4.scale(sm, glMatrix.mat4.create(), glMatrix.vec3.fromValues(s,s,s));
+	return sm;
 }
 
 //-----------------------------------------------------------------
@@ -319,12 +405,12 @@ function genTranslationMatrix(v0, v1, v2, fctr){
 	let avgy = (v0[1] + v1[1] + v2[1]) / 3.0;
 	let avgz = (v0[2] + v1[2] + v2[2]) / 3.0;
 	
-	let v3 = glMatrix.vec3.fromValues(avgx, avgy, avgz);
-	let v2 = glMatrix.vec2.fromValues(avgx, avgy);
+	let avgv3 = glMatrix.vec3.fromValues(avgx, avgy, avgz);
+	let avgv2 = glMatrix.vec2.fromValues(avgx, avgy);
 	
 	let refv2 = glMatrix.vec2.fromValues(1.0, 0.0);
 	
-	let centerAngle = signedAngle(v2, refv2);
+	let centerAngle = signedAngle(avgv2, refv2);
 	
 	let rotAngleRad = fctr * Math.PI * 2.0;
 	let rotAngleDeg = fctr * 360;
@@ -342,7 +428,7 @@ function genTranslationMatrix(v0, v1, v2, fctr){
 	let scalceVec3 = glMatrix.vec3.fromValues(scale, scale, scale);
 	
 	let transformMat4 = glMatrix.mat4.create();
-	let transformMat4 = glMatrix.mat4.fromRotationTranslationScale(transformMat4, quat, translVec3, scalceVec3);
+	glMatrix.mat4.fromRotationTranslationScale(transformMat4, quat, translVec3, scalceVec3);
 	return transformMat4;
 }
 
