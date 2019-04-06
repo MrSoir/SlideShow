@@ -1,0 +1,59 @@
+* {box-sizing: border-box}
+
+.SlideShow{
+	 width: 1000px;
+    height: 400px;
+    position: relative;
+    margin: auto;
+    text-align: center;
+    
+    background-color: #00ff0033;
+}
+
+.ImagesContainer{
+	position: relative;
+	width: 100%;
+	height: 100%;
+}
+
+.ImgContainer{
+	 position: relative;
+    display: inline-block;
+    width: 22%;
+    margin: 0 10px;
+    height: 100%;
+
+}
+.Image{
+	 position: absolute;
+	 width: 90%;
+    height: 85%;
+    top: 0;
+	 left: 5%;
+    transition-duration: 0.2s;
+}
+.FocusImage{
+	height: 90%;
+	width: 100%;
+	left: 0%;
+}
+.Legend{
+	position: absolute;
+	width: 100%;
+   bottom: 0;
+   padding-bottom: 10px;
+}
+#img1{
+	background: #ff000033;
+}
+#img2{
+	background: #00ff0033;
+}
+#img3{
+	background: #0000ff33;
+}
+
+@keyframes ImageAnim {
+  from {background-color: red;}
+  to {background-color: yellow;}
+}
